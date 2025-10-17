@@ -6,6 +6,7 @@ dotenv.config();
 import express from "express";
 import mongoose from "mongoose";
 import userRoutes from "./src/routes/userRoute.js";
+import dashboardRoutes from "./src/routes/dashboardRoute.js";
 import axios from "axios";
 
 const app = express();
@@ -270,10 +271,81 @@ app.post('/chat', async (req, res) => {
           error: 'Invalid API key. Please check your Groq API configuration.' 
         });
       } else {
-        res.status(500).json({ 
-          error: 'Failed to get AI response. Please try again.' 
+        res.status(500).json({
+          error: 'Failed to get AI response. Please try again.'
         });
       }
       }
     }
   });
+
+// Streaming chat route (optional - for real-time responses)
+app.post('/chat/stream', async (req, res) => {
+  try {
+    const { message, conversationHistory = [] } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ 
+        error: 'Message is required' 
+      });
+    }
+
+    // Set up Server-Sent Events
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Cache-Control'
+    });
+
+    const messages = [
+      {
+        role: 'system',
+        content: 'You are a helpful AI assistant. Provide clear, concise, and helpful responses to user queries.'
+      },
+      ...conversationHistory,
+      {
+        role: 'user',
+        content: message
+      }
+    ];
+
+    // Create streaming completion
+    const stream = await groq.chat.completions.create({
+      messages: messages,
+      model: 'llama3-8b-8192',
+      temperature: 0.7,
+      max_tokens: 1000,
+      top_p: 1,
+      stream: true
+    });
+
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content || '';
+      if (content) {
+        res.write(`data: ${JSON.stringify({ content })}\n\n`);
+      }
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
+
+  } catch (error) {
+    console.error('Streaming Error:', error);
+    res.write(`data: ${JSON.stringify({ error: 'Failed to stream response' })}\n\n`);
+    res.end();
+  }
+});
+
+// Connect to MongoDB
+mongoose.connect("mongodb://127.0.0.1:27017/travel_companion");
+
+// Routes
+app.use("/api/users", userRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
+});
